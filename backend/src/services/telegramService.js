@@ -24,6 +24,29 @@ function formatDateVi(d) {
   return `${pad(x.getDate())}/${pad(x.getMonth() + 1)}/${x.getFullYear()} ${pad(x.getHours())}:${pad(x.getMinutes())}`;
 }
 
+export function formatPaymentMessage(row) {
+  if (row.discount_code_id) {
+    return (
+      `🆕 Đăng ký mới\n` +
+      `👤 Email: ${row.email}\n` +
+      `📦 Gói: ${row.duration_days} ngày\n` +
+      `🏷️ Mã giảm: ${row.coupon_code} (-${row.discount_pct}%)\n` +
+      `💰 Giá gốc:  ${formatMoney(row.amount)}đ\n` +
+      `✂️ Giảm:     -${formatMoney(row.discount_amount)}đ\n` +
+      `💵 Thực thu: ${formatMoney(row.final_amount)}đ\n` +
+      `🏦 Nội dung CK: ${row.transfer_code}`
+    );
+  } else {
+    return (
+      `🆕 Đăng ký mới\n` +
+      `👤 Email: ${row.email}\n` +
+      `📦 Gói: ${row.duration_days} ngày\n` +
+      `💰 Số tiền: ${formatMoney(row.final_amount)}đ\n` +
+      `🏦 Nội dung CK: ${row.transfer_code}`
+    );
+  }
+}
+
 function isAdmin(fromId) {
   if (!telegramChatId) return false;
   return String(fromId) === String(telegramChatId);
@@ -58,26 +81,7 @@ export async function notifyNewPayment(bot, paymentId) {
     ],
   };
 
-  let text;
-  if (row.discount_code_id) {
-    text =
-      `🆕 Đăng ký mới\n` +
-      `👤 Email: ${row.email}\n` +
-      `📦 Gói: ${row.duration_days} ngày\n` +
-      `🏷️ Mã giảm: ${row.coupon_code} (-${row.discount_pct}%)\n` +
-      `💰 Giá gốc:  ${formatMoney(row.amount)}đ\n` +
-      `✂️ Giảm:     -${formatMoney(row.discount_amount)}đ\n` +
-      `💵 Thực thu: ${formatMoney(row.final_amount)}đ\n` +
-      `🏦 Nội dung CK: ${row.transfer_code}`;
-  } else {
-    text =
-      `🆕 Đăng ký mới\n` +
-      `👤 Email: ${row.email}\n` +
-      `📦 Gói: ${row.duration_days} ngày\n` +
-      `💰 Số tiền: ${formatMoney(row.final_amount)}đ\n` +
-      `🏦 Nội dung CK: ${row.transfer_code}`;
-  }
-
+  const text = formatPaymentMessage(row);
   const sent = await bot.sendMessage(telegramChatId, text, { reply_markup: keyboard });
   await pool.query(`UPDATE pending_payments SET telegram_msg_id = $2 WHERE id = $1`, [
     paymentId,
@@ -211,26 +215,7 @@ async function handleCancelStep2(bot, query, paymentId) {
     ],
   };
 
-  let text;
-  if (row.discount_code_id) {
-    text =
-      `🆕 Đăng ký mới\n` +
-      `👤 Email: ${row.email}\n` +
-      `📦 Gói: ${row.duration_days} ngày\n` +
-      `🏷️ Mã giảm: ${row.coupon_code} (-${row.discount_pct}%)\n` +
-      `💰 Giá gốc:  ${formatMoney(row.amount)}đ\n` +
-      `✂️ Giảm:     -${formatMoney(row.discount_amount)}đ\n` +
-      `💵 Thực thu: ${formatMoney(row.final_amount)}đ\n` +
-      `🏦 Nội dung CK: ${row.transfer_code}`;
-  } else {
-    text =
-      `🆕 Đăng ký mới\n` +
-      `👤 Email: ${row.email}\n` +
-      `📦 Gói: ${row.duration_days} ngày\n` +
-      `💰 Số tiền: ${formatMoney(row.final_amount)}đ\n` +
-      `🏦 Nội dung CK: ${row.transfer_code}`;
-  }
-
+  const text = formatPaymentMessage(row);
   await bot.answerCallbackQuery(query.id, { text: 'Đã huỷ xác nhận.' });
   if (row.telegram_msg_id) {
     await bot.editMessageText(text, {

@@ -4,8 +4,6 @@ import { pool } from '../config/database.js';
 import { paymentLimiter } from '../middleware/rateLimiter.js';
 import { requireAuth } from '../middleware/auth.js';
 import * as couponService from '../services/couponService.js';
-import * as telegramService from '../services/telegramService.js';
-import { bot } from '../config/telegram.js';
 
 const router = Router();
 
@@ -98,7 +96,7 @@ router.post('/check-coupon', paymentLimiter, requireAuth, async (req, res) => {
 
 /**
  * POST /payment/request
- * Tạo đơn chờ thanh toán + URL VietQR; gửi Telegram cho admin.
+ * Tạo đơn chờ thanh toán + URL VietQR.
  */
 router.post('/request', paymentLimiter, requireAuth, async (req, res) => {
   try {
@@ -176,12 +174,6 @@ router.post('/request', paymentLimiter, requireAuth, async (req, res) => {
       addInfo: transfer_code,
     });
 
-    try {
-      await telegramService.notifyNewPayment(bot, paymentId);
-    } catch (te) {
-      console.error('Telegram notify failed', te);
-    }
-
     return res.status(201).json({
       success: true,
       message: 'Đã tạo yêu cầu thanh toán.',
@@ -198,6 +190,41 @@ router.post('/request', paymentLimiter, requireAuth, async (req, res) => {
           duration_days: plan.duration_days,
         },
       },
+    });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ success: false, message: 'Lỗi máy chủ.' });
+  }
+});
+
+/**
+ * POST /payment/:paymentId/cancel
+ * User tự hủy đơn đang chờ (chọn nhầm gói, muốn tạo lại đơn mới).
+ */
+router.post('/:paymentId/cancel', paymentLimiter, requireAuth, async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+    const r = await pool.query(
+      `UPDATE pending_payments
+       SET status = 'rejected',
+           confirmed_at = NOW(),
+           note = COALESCE(note, 'user_cancelled')
+       WHERE id = $1 AND user_id = $2 AND status = 'waiting'
+       RETURNING id`,
+      [paymentId, req.user.id],
+    );
+
+    if (r.rowCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy đơn chờ để huỷ.',
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Đã huỷ đơn chờ thanh toán.',
+      data: { payment_id: r.rows[0].id, status: 'rejected' },
     });
   } catch (e) {
     console.error(e);

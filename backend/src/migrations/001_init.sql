@@ -61,7 +61,6 @@ CREATE TABLE IF NOT EXISTS pending_payments (
   discount_amount DECIMAL(10, 2) DEFAULT 0,
   final_amount DECIMAL(10, 2) NOT NULL,
   status payment_status DEFAULT 'waiting',
-  telegram_msg_id BIGINT,
   note TEXT,
   created_at TIMESTAMP DEFAULT NOW(),
   confirmed_at TIMESTAMP
@@ -77,6 +76,17 @@ CREATE TABLE IF NOT EXISTS discount_usages (
   final_amount DECIMAL(10, 2) NOT NULL,
   used_at TIMESTAMP DEFAULT NOW(),
   UNIQUE (discount_code_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS sepay_transactions (
+  id               SERIAL PRIMARY KEY,
+  transaction_id   VARCHAR(100) UNIQUE NOT NULL,
+  transfer_code    VARCHAR(100),
+  amount           DECIMAL(10,2),
+  payment_id       UUID REFERENCES pending_payments(id),
+  matched          BOOLEAN DEFAULT false,
+  raw_payload      JSONB,
+  processed_at     TIMESTAMP DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS activation_logs (

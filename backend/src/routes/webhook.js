@@ -1,44 +1,33 @@
 import { Router } from 'express';
-import { bot, telegramWebhookSecret, telegramChatId } from '../config/telegram.js';
-import { registerTelegramCallbacks, formatPaymentMessage } from '../services/telegramService.js';
+import { bot, telegramWebhookSecret } from '../config/telegram.js';
+import { verifySePayWebhook, processWebhook as processSePayWebhook } from '../services/sepayService.js';
 
 const router = Router();
 
-registerTelegramCallbacks(bot);
-
 /**
- * POST /webhook/test-message
- * Dùng để test việc sinh text cho Telegram và tự push sang Telegram
+ * POST /webhook/sepay
+ * Nhận webhook từ SePay.
  */
-router.post('/test-message', async (req, res) => {
-  try {
-    const text = formatPaymentMessage(req.body);
-    
-    // Tạo bàn phím ảo (fake callback_data 32 ký tự) giống y hệt khi chạy thật
-    const dummyCompact = '00000000000000000000000000000000';
-    const keyboard = {
-      inline_keyboard: [
-        [
-          { text: '✅ Xác nhận đã nhận tiền', callback_data: `1a${dummyCompact}` },
-          { text: '❌ Từ chối', callback_data: `1r${dummyCompact}` },
-        ],
-      ],
-    };
-
-    // Push vào tele nếu bot và chatId đã được set
-    if (bot && telegramChatId) {
-      await bot.sendMessage(telegramChatId, text, { reply_markup: keyboard });
-    }
-
-    return res.json({ success: true, text, pushedToTelegram: !!(bot && telegramChatId) });
-  } catch (error) {
-    return res.status(500).json({ success: false, error: error.message });
+router.post('/sepay', async (req, res) => {
+  if (!verifySePayWebhook(req)) {
+    return res.sendStatus(401);
   }
+
+  // SePay expects a successful JSON response.
+  // Trả 200 ngay lập tức để tránh timeout; xử lý async bên dưới.
+  res.status(200).json({ success: true });
+
+  // Xử lý bất đồng bộ sau khi đã trả 200 cho SePay (tránh timeout).
+  Promise.resolve()
+    .then(() => processSePayWebhook(req.body))
+    .catch((e) => {
+      console.error('[SePay] Lỗi xử lý webhook:', e);
+    });
 });
 
 /**
  * POST /webhook/telegram/:secret
- * Nhận update từ Telegram (webhook). Secret phải khớp TELEGRAM_WEBHOOK_SECRET.
+ * Giữ lại webhook Telegram đơn giản: chỉ verify secret và forward update nếu có bot.
  */
 router.post('/telegram/:secret', (req, res) => {
   if (!bot) {
@@ -58,3 +47,4 @@ router.post('/telegram/:secret', (req, res) => {
 });
 
 export default router;
+

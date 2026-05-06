@@ -19,11 +19,13 @@ async function generateUniqueTransferCode(email, durationDays) {
     .split('@')[0]
     .replace(/[^a-zA-Z0-9]/g, '')
     .toUpperCase()
-    .slice(0, 12);
+    .slice(0, 6); // Rút ngắn prefix email còn 6 ký tự
   for (let i = 0; i < 8; i++) {
-    const rand = crypto.randomBytes(4).toString('hex').toUpperCase();
+    // 6 ký tự ngẫu nhiên (3 bytes)
+    const rand = crypto.randomBytes(3).toString('hex').toUpperCase();
+    // Tổng cộng: local(6) + durationDays(max 3) + "NGAY"(4) + rand(6) = tối đa 19-20 ký tự
     const code = `${local || 'USER'}${durationDays}NGAY${rand}`;
-    const c = code.slice(0, 100);
+    const c = code.slice(0, 20); // Đảm bảo tối đa 20 ký tự
     const { rows } = await pool.query(`SELECT 1 FROM pending_payments WHERE transfer_code = $1`, [
       c,
     ]);
@@ -116,16 +118,12 @@ router.post('/request', paymentLimiter, requireAuth, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Gói không tồn tại.' });
     }
 
-    const waiting = await pool.query(
-      `SELECT id FROM pending_payments WHERE user_id = $1 AND status = 'waiting' LIMIT 1`,
+    // Hủy các đơn đang chờ cũ của user này trước khi tạo đơn mới
+    await pool.query(
+      `UPDATE pending_payments SET status = 'rejected', note = 'auto_cancelled_for_new_request' 
+       WHERE user_id = $1 AND status = 'waiting'`,
       [req.user.id],
     );
-    if (waiting.rowCount > 0) {
-      return res.status(409).json({
-        success: false,
-        message: 'Bạn đã có đơn chờ xác nhận. Hoàn tất hoặc huỷ trước khi tạo đơn mới.',
-      });
-    }
 
     let discount_code_id = null;
     let amount = Number(plan.price);

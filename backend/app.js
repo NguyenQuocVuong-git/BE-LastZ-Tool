@@ -13,6 +13,15 @@ const SERVER_URL = (process.env.SERVER_URL || '').replace(/\/$/, '');
 app.set('trust proxy', 1);
 
 app.use(express.json({ limit: '256kb' }));
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, x-session-token');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
 
 app.get('/health', (req, res) => {
   res.json({ success: true, data: { ok: true } });

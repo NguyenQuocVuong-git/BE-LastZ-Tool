@@ -86,10 +86,11 @@ router.post('/register', registerLimiter, async (req, res) => {
         message: 'Email và mật khẩu là bắt buộc.',
       });
     }
-    if (password.length < 8) {
+    const strongPasswordRegex = /^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*(),.?":{}|<>]).{8,}$/;
+    if (!strongPasswordRegex.test(password)) {
       return res.status(400).json({
         success: false,
-        message: 'Mật khẩu tối thiểu 8 ký tự.',
+        message: 'Mật khẩu phải từ 8 ký tự, gồm ít nhất 1 chữ hoa, 1 số và 1 ký tự đặc biệt.',
       });
     }
     if (isDisposableEmail(email)) {
@@ -109,10 +110,19 @@ router.post('/register', registerLimiter, async (req, res) => {
       [email, password_hash, ip],
     );
 
+    const session_token = userService.generateSessionToken();
+    await pool.query(
+      `UPDATE users SET session_token = $2 WHERE id = $1`,
+      [rows[0].id, session_token]
+    );
+
     return res.status(201).json({
       success: true,
-      message: 'Đăng ký thành công. Chờ admin kích hoạt sau thanh toán.',
-      data: rows[0],
+      message: 'Đăng ký thành công.',
+      data: {
+        ...rows[0],
+        session_token,
+      },
     });
   } catch (e) {
     if (e.code === '23505') {
@@ -195,7 +205,7 @@ router.post('/login', loginIpLimiter, async (req, res) => {
       return res.status(403).json({
         success: false,
         code: 'BANNED',
-        message: 'Tài khoản bị khóa.',
+        message: 'Tài khoản của bạn đã bị khóa. Vui lòng liên hệ Admin để được hỗ trợ.',
       });
     }
 
@@ -270,37 +280,16 @@ router.get('/verify', verifyLimiter, async (req, res) => {
       return res.json({
         success: false,
         code: 'BANNED',
-        message: 'Tài khoản bị khóa.',
-        data: { valid: false },
-      });
-    }
-    if (u.status === 'pending') {
-      return res.json({
-        success: false,
-        code: 'PENDING',
-        message: 'Tài khoản chưa kích hoạt.',
-        data: { valid: false },
-      });
-    }
-    if (u.status === 'expired') {
-      return res.json({
-        success: false,
-        code: 'EXPIRED',
-        message: 'Gói đã hết hạn.',
+        message: 'Tài khoản của bạn đã bị khóa. Vui lòng liên hệ Admin để được hỗ trợ.',
         data: { valid: false },
       });
     }
 
+    // Cập nhật trạng thái expired nếu hết hạn nhưng vẫn cho phép session valid để FE hiện thông báo
+    let currentStatus = u.status;
     if (u.status === 'active' && u.expires_at && new Date(u.expires_at) <= new Date()) {
-      await pool.query(`UPDATE users SET status = 'expired', session_token = NULL WHERE id = $1`, [
-        u.id,
-      ]);
-      return res.json({
-        success: false,
-        code: 'EXPIRED',
-        message: 'Gói đã hết hạn.',
-        data: { valid: false },
-      });
+      await pool.query(`UPDATE users SET status = 'expired', session_token = NULL WHERE id = $1`, [u.id]);
+      currentStatus = 'expired';
     }
 
     const { remaining_days, remaining_hours } = userService.remainingFromExpires(u.expires_at);
@@ -310,11 +299,14 @@ router.get('/verify', verifyLimiter, async (req, res) => {
       message: 'OK',
       data: {
         valid: true,
+        status: currentStatus,
         expires_at: u.expires_at,
         remaining_days,
         remaining_hours,
       },
     });
+
+
   } catch (e) {
     console.error(e);
     return res.status(500).json({

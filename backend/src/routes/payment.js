@@ -4,8 +4,13 @@ import { pool } from '../config/database.js';
 import { paymentLimiter } from '../middleware/rateLimiter.js';
 import { requireAuth } from '../middleware/auth.js';
 import * as couponService from '../services/couponService.js';
+import * as userService from '../services/userService.js';
 
 const router = Router();
+
+function toIsoOrNull(value) {
+  return value ? new Date(value).toISOString() : null;
+}
 
 function buildVietQrUrl({ bankBin, accountNo, amount, addInfo }) {
   const amountInt = Math.round(Number(amount));
@@ -177,15 +182,79 @@ router.post('/request', paymentLimiter, requireAuth, async (req, res) => {
       message: 'Đã tạo yêu cầu thanh toán.',
       data: {
         payment_id: paymentId,
+        payment_status: 'waiting',
         transfer_code,
         amount,
         discount_amount,
         final_amount,
         vietqr_url,
+        poll_endpoint: `/payment/${paymentId}/status`,
+        should_unlock_features: false,
         plan: {
           id: plan.id,
           name: plan.name,
           duration_days: plan.duration_days,
+        },
+      },
+    });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ success: false, message: 'Lỗi máy chủ.' });
+  }
+});
+
+/**
+ * GET /payment/:paymentId/status
+ * FE poll trạng thái đơn thanh toán để mở khoá tính năng ngay sau khi webhook xác nhận.
+ */
+router.get('/:paymentId/status', paymentLimiter, requireAuth, async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+
+    const { rows: paymentRows } = await pool.query(
+      `SELECT pp.id, pp.user_id, pp.plan_id, pp.status, pp.confirmed_at, pp.amount, pp.discount_amount, pp.final_amount
+       FROM pending_payments pp
+       WHERE pp.id = $1 AND pp.user_id = $2`,
+      [paymentId, req.user.id],
+    );
+    const payment = paymentRows[0];
+    if (!payment) {
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy đơn thanh toán.',
+      });
+    }
+
+    const { rows: userRows } = await pool.query(
+      `SELECT id, status, plan_id, activated_at, expires_at FROM users WHERE id = $1`,
+      [req.user.id],
+    );
+    const user = userRows[0];
+
+    const { remaining_days, remaining_hours } = userService.remainingFromExpires(user?.expires_at);
+    const paymentConfirmed = payment.status === 'confirmed';
+    const userReady = user?.status === 'active';
+    const shouldUnlockFeatures = paymentConfirmed && userReady;
+
+    return res.json({
+      success: true,
+      data: {
+        payment_id: payment.id,
+        payment_status: payment.status,
+        amount: Number(payment.amount),
+        discount_amount: Number(payment.discount_amount),
+        final_amount: Number(payment.final_amount),
+        confirmed_at: toIsoOrNull(payment.confirmed_at),
+        should_unlock_features: shouldUnlockFeatures,
+        payment_confirmed: paymentConfirmed,
+        user: {
+          id: user?.id || req.user.id,
+          status: user?.status || 'pending',
+          plan_id: user?.plan_id ?? null,
+          activated_at: toIsoOrNull(user?.activated_at),
+          expires_at: toIsoOrNull(user?.expires_at),
+          remaining_days,
+          remaining_hours,
         },
       },
     });

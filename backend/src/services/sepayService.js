@@ -11,16 +11,44 @@ function extractTransactionId(payload) {
   return String(payload.transaction_id ?? payload.id ?? '');
 }
 
+function looksLikeInternalTransferCode(value) {
+  const s = String(value || '').trim().toUpperCase();
+  if (!s || s.length > 20) return false;
+  // Format được tạo từ /payment/request: {LOCAL}{duration}NGAY{RANDOM}
+  return /^[A-Z0-9]{1,6}\d{1,3}NGAY[A-Z0-9]{4,10}$/.test(s);
+}
+
+function extractEmbeddedTransferCode(value) {
+  const text = String(value || '').toUpperCase();
+  if (!text) return '';
+  const tokens = text.match(/[A-Z0-9]{6,25}/g) || [];
+  for (const token of tokens) {
+    if (looksLikeInternalTransferCode(token)) return token;
+  }
+  return '';
+}
+
 function extractTransferCode(payload) {
-  return (
-    payload.code || // Payment code detected via Payment Code Structure (can be null)
-    payload.transfer_code ||
-    payload.transferContent ||
-    payload.description ||
-    payload.content || // Transfer description (fallback)
-    payload.memo ||
-    ''
-  );
+  const directCandidates = [
+    payload.code, // Payment code detected via Payment Code Structure
+    payload.transfer_code,
+    payload.transferContent,
+    payload.memo,
+  ];
+  for (const candidate of directCandidates) {
+    if (looksLikeInternalTransferCode(candidate)) {
+      return String(candidate).trim().toUpperCase();
+    }
+  }
+
+  // Nhiều webhook trả về mô tả đầy đủ thay vì riêng transfer_code.
+  const textCandidates = [payload.content, payload.description, ...directCandidates];
+  for (const candidate of textCandidates) {
+    const extracted = extractEmbeddedTransferCode(candidate);
+    if (extracted) return extracted;
+  }
+
+  return '';
 }
 
 function extractAmount(payload) {

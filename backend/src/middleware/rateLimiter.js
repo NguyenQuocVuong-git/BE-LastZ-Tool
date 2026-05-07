@@ -70,11 +70,11 @@ export function createVerifyLimiter() {
 }
 
 /**
- * POST /payment/* — 5 lần / giờ / IP
+ * POST /payment/* — 30 lần / 15 phút / IP
  */
 export const paymentLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max: 5,
+  windowMs: 15 * 60 * 1000,
+  max: 30,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => clientIp(req),

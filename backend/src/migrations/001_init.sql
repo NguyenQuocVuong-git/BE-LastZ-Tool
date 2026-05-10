@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS plans (
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   email VARCHAR(255) UNIQUE NOT NULL,
+  name VARCHAR(255),
   password_hash VARCHAR(255) NOT NULL,
   role VARCHAR(10) DEFAULT 'user',
   status user_status DEFAULT 'pending',
@@ -39,6 +40,8 @@ CREATE TABLE IF NOT EXISTS users (
   last_login_ip VARCHAR(45),
   created_at TIMESTAMP DEFAULT NOW()
 );
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS name VARCHAR(255);
 
 CREATE TABLE IF NOT EXISTS discount_codes (
   id SERIAL PRIMARY KEY,

@@ -204,6 +204,72 @@ router.post('/request', paymentLimiter, requireAuth, async (req, res) => {
 });
 
 /**
+ * GET /payment/history
+ * Lịch sử đơn thanh toán của tài khoản đăng nhập (chờ / đã xác nhận / từ chối).
+ * Query: limit (mặc định 20, tối đa 100), offset (mặc định 0).
+ */
+router.get('/history', paymentLimiter, requireAuth, async (req, res) => {
+  try {
+    const limitRaw = Number(req.query?.limit);
+    const offsetRaw = Number(req.query?.offset);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(1, Math.floor(limitRaw)), 100) : 20;
+    const offset =
+      Number.isFinite(offsetRaw) && offsetRaw >= 0 ? Math.floor(offsetRaw) : 0;
+
+    const { rows: countRows } = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM pending_payments WHERE user_id = $1`,
+      [req.user.id],
+    );
+    const total = countRows[0]?.total ?? 0;
+
+    const { rows } = await pool.query(
+      `SELECT pp.id, pp.status, pp.transfer_code, pp.amount, pp.discount_amount, pp.final_amount,
+              pp.note, pp.created_at, pp.confirmed_at,
+              p.id AS plan_id, p.name AS plan_name, p.duration_days AS plan_duration_days,
+              dc.code AS discount_code
+       FROM pending_payments pp
+       JOIN plans p ON p.id = pp.plan_id
+       LEFT JOIN discount_codes dc ON dc.id = pp.discount_code_id
+       WHERE pp.user_id = $1
+       ORDER BY pp.created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [req.user.id, limit, offset],
+    );
+
+    const items = rows.map((r) => ({
+      payment_id: r.id,
+      status: r.status,
+      transfer_code: r.transfer_code,
+      amount: Number(r.amount),
+      discount_amount: Number(r.discount_amount),
+      final_amount: Number(r.final_amount),
+      note: r.note ?? null,
+      created_at: toIsoOrNull(r.created_at),
+      confirmed_at: toIsoOrNull(r.confirmed_at),
+      plan: {
+        id: r.plan_id,
+        name: r.plan_name,
+        duration_days: r.plan_duration_days,
+      },
+      discount_code: r.discount_code ?? null,
+    }));
+
+    return res.json({
+      success: true,
+      data: {
+        items,
+        total,
+        limit,
+        offset,
+      },
+    });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ success: false, message: 'Lỗi máy chủ.' });
+  }
+});
+
+/**
  * GET /payment/:paymentId/status
  * FE poll trạng thái đơn thanh toán để mở khoá tính năng ngay sau khi webhook xác nhận.
  */

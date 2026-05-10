@@ -1,4 +1,5 @@
 import rateLimit from 'express-rate-limit';
+import { extractSessionToken } from '../utils/sessionToken.js';
 
 function clientIp(req) {
   const xf = req.headers['x-forwarded-for'];
@@ -13,7 +14,7 @@ function clientIp(req) {
  */
 export const registerLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
-  max: 3,
+  max: 15,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => clientIp(req),
@@ -27,11 +28,11 @@ export const registerLimiter = rateLimit({
 });
 
 /**
- * POST /auth/login — 5 lần / 15 phút / IP (lockout theo email xử lý trong route)
+ * POST /auth/login — 50 lần / 15 phút / IP (lockout theo email xử lý trong route)
  */
 export const loginIpLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 50,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => clientIp(req),
@@ -40,6 +41,24 @@ export const loginIpLimiter = rateLimit({
       success: false,
       code: 'RATE_LIMITED',
       message: 'Quá nhiều lần đăng nhập từ IP này. Thử lại sau.',
+    });
+  },
+});
+
+/**
+ * POST /auth/forgot-password — 5 lần / giờ / IP
+ */
+export const forgotPasswordLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => clientIp(req),
+  handler(req, res) {
+    res.status(429).json({
+      success: false,
+      code: 'RATE_LIMITED',
+      message: 'Quá nhiều lần yêu cầu đặt lại mật khẩu. Thử lại sau 1 giờ.',
     });
   },
 });
@@ -54,8 +73,7 @@ export function createVerifyLimiter() {
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: (req) => {
-      const raw = req.headers['x-session-token'];
-      const token = typeof raw === 'string' ? raw.trim() : '';
+      const token = extractSessionToken(req);
       if (token) return `sess:${token}`;
       return `verify_ip:${clientIp(req)}`;
     },

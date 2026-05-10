@@ -1,12 +1,12 @@
 import { pool } from '../config/database.js';
 import * as userService from '../services/userService.js';
+import { extractSessionToken } from '../utils/sessionToken.js';
 
 /**
- * Đọc header x-session-token, nạp user vào req.user
+ * Đọc header x-session-token (hoặc Bearer), nạp user vào req.user
  */
 export async function requireAuth(req, res, next) {
-  const raw = req.headers['x-session-token'];
-  const token = typeof raw === 'string' ? raw.trim() : '';
+  const token = extractSessionToken(req);
   if (!token) {
     return res.status(401).json({
       success: false,
@@ -24,8 +24,8 @@ export async function requireAuth(req, res, next) {
     if (!user) {
       return res.status(401).json({
         success: false,
-        code: 'UNAUTHORIZED',
-        message: 'Phiên không hợp lệ.',
+        code: 'SESSION_INVALID',
+        message: 'Phiên không hợp lệ (đăng nhập lại hoặc đã đăng nhập thiết bị khác).',
       });
     }
 
@@ -38,8 +38,8 @@ export async function requireAuth(req, res, next) {
     if (!u || u.session_token !== token) {
       return res.status(401).json({
         success: false,
-        code: 'UNAUTHORIZED',
-        message: 'Phiên không hợp lệ.',
+        code: 'SESSION_INVALID',
+        message: 'Phiên không hợp lệ (đăng nhập lại hoặc đã đăng nhập thiết bị khác).',
       });
     }
     req.user = u;

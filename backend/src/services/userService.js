@@ -16,19 +16,39 @@ export async function verifyPassword(plain, hash) {
   return bcrypt.compare(plain, hash);
 }
 
+/** Mật khẩu ngẫu nhiên đạt rule đăng ký (hoa, thường, số, ký tự đặc biệt, ≥8). */
+export function generateSecureRandomPassword(length = 14) {
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const lower = 'abcdefghijkmnopqrstuvwxyz';
+  const digits = '23456789';
+  const special = '!@#$%^&*(),.?":{}|<>';
+  const all = upper + lower + digits + special;
+  const pick = (pool) => pool[crypto.randomInt(0, pool.length)];
+
+  const must = [pick(upper), pick(lower), pick(digits), pick(special)];
+  const buf = [];
+  for (let i = must.length; i < Math.max(length, 12); i++) {
+    buf.push(pick(all));
+  }
+  const chars = [...must, ...buf];
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(0, i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join('');
+}
+
 /**
- * Nếu active nhưng đã quá expires_at → chuyển expired (server time).
+ * Nếu active nhưng đã quá expires_at → chuyển expired (giờ DB).
+ * Giữ nguyên session_token để user vẫn gọi được API gia hạn / thanh toán.
  */
 export async function refreshUserExpiryIfNeeded(user) {
   if (!user || user.status !== 'active' || !user.expires_at) return;
-  const now = new Date();
-  const exp = new Date(user.expires_at);
-  if (exp <= now) {
-    await pool.query(
-      `UPDATE users SET status = 'expired', session_token = NULL WHERE id = $1`,
-      [user.id],
-    );
-  }
+  await pool.query(
+    `UPDATE users SET status = 'expired'
+     WHERE id = $1 AND status = 'active' AND expires_at <= NOW()`,
+    [user.id],
+  );
 }
 
 /**

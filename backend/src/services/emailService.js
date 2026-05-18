@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import { appPublicBaseUrl } from '../utils/appUrl.js';
 
 function smtpConfigured() {
   return Boolean(
@@ -25,10 +26,10 @@ function createTransport() {
 
 /**
  * @param {string} to
- * @param {string} plainPassword
+ * @param {string} resetLink
  * @param {string} [displayName]
  */
-export async function sendPasswordResetEmail(to, plainPassword, displayName) {
+export async function sendPasswordResetLinkEmail(to, resetLink, displayName) {
   if (!smtpConfigured()) {
     const err = new Error('SMTP_NOT_CONFIGURED');
     err.code = 'SMTP_NOT_CONFIGURED';
@@ -36,28 +37,67 @@ export async function sendPasswordResetEmail(to, plainPassword, displayName) {
   }
 
   const from = process.env.SMTP_FROM.trim();
-  const subject = process.env.SMTP_PASSWORD_RESET_SUBJECT || 'Mật khẩu đăng nhập mới';
+  const subject = process.env.SMTP_PASSWORD_RESET_SUBJECT || 'Đặt lại mật khẩu';
   const appName = process.env.APP_NAME || 'Ứng dụng';
-
   const greeting = displayName ? `Xin chào ${displayName},` : 'Xin chào,';
+
   const text = `${greeting}
 
 Bạn vừa yêu cầu đặt lại mật khẩu cho tài khoản ${to}.
 
-Mật khẩu mới của bạn là: ${plainPassword}
+Mở link sau (hiệu lực 1 giờ, dùng một lần):
+${resetLink}
 
-Vui lòng đăng nhập và đổi mật khẩu nếu hệ thống hỗ trợ.
-
-Nếu bạn không yêu cầu thao tác này, hãy liên hệ admin ngay.
+Nếu bạn không yêu cầu thao tác này, hãy bỏ qua email này.
 
 — ${appName}`;
 
-  await createTransport().sendMail({
-    from,
-    to,
-    subject,
-    text,
-  });
+  await createTransport().sendMail({ from, to, subject, text });
+}
+
+/**
+ * @param {string} to
+ * @param {string} verifyLink
+ * @param {string} [displayName]
+ */
+export async function sendEmailVerificationEmail(to, verifyLink, displayName) {
+  if (!smtpConfigured()) {
+    const err = new Error('SMTP_NOT_CONFIGURED');
+    err.code = 'SMTP_NOT_CONFIGURED';
+    throw err;
+  }
+
+  const from = process.env.SMTP_FROM.trim();
+  const subject = process.env.SMTP_VERIFY_SUBJECT || 'Xác minh email đăng ký';
+  const appName = process.env.APP_NAME || 'Ứng dụng';
+  const greeting = displayName ? `Xin chào ${displayName},` : 'Xin chào,';
+
+  const text = `${greeting}
+
+Cảm ơn bạn đã đăng ký tại ${appName}.
+
+Xác minh email bằng link sau (hiệu lực 24 giờ):
+${verifyLink}
+
+— ${appName}`;
+
+  await createTransport().sendMail({ from, to, subject, text });
+}
+
+export function buildPasswordResetLink(plainToken) {
+  const base = appPublicBaseUrl();
+  if (!base) {
+    throw new Error('APP_PUBLIC_URL_OR_FRONTEND_URL_REQUIRED');
+  }
+  return `${base}/reset-password?token=${encodeURIComponent(plainToken)}`;
+}
+
+export function buildEmailVerifyLink(plainToken) {
+  const base = appPublicBaseUrl();
+  if (!base) {
+    throw new Error('APP_PUBLIC_URL_OR_FRONTEND_URL_REQUIRED');
+  }
+  return `${base}/verify-email?token=${encodeURIComponent(plainToken)}`;
 }
 
 export function isSmtpConfigured() {

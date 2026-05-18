@@ -2,8 +2,14 @@ import { pool } from '../config/database.js';
 import * as userService from './userService.js';
 import * as couponService from './couponService.js';
 import { notifyActivated } from './telegramService.js';
+import { timingSafeEqualStrings } from '../utils/tokenHash.js';
 
-const IS_PRODUCTION = process.env.IS_PRODUCTION === 'true';
+function isProductionEnv() {
+  return process.env.NODE_ENV === 'production' || process.env.IS_PRODUCTION === 'true';
+}
+
+const ALLOW_UNVERIFIED_SEPAY =
+  !isProductionEnv() && process.env.ALLOW_UNVERIFIED_SEPAY_WEBHOOK === 'true';
 
 function extractTransactionId(payload) {
   // SePay Webhook: `id`
@@ -62,22 +68,29 @@ function extractAmount(payload) {
 }
 
 export function verifySePayWebhook(req) {
-  if (!IS_PRODUCTION) {
-    console.log('[SANDBOX] Bỏ qua verify SePay apikey');
+  const apiKey = process.env.SEPAY_API_KEY?.trim();
+  if (!apiKey) {
+    console.error('[SePay] Thiếu SEPAY_API_KEY — từ chối webhook.');
+    return false;
+  }
+
+  if (ALLOW_UNVERIFIED_SEPAY) {
+    console.warn('[DEV] ALLOW_UNVERIFIED_SEPAY_WEBHOOK=true — bỏ qua verify Apikey.');
     return true;
   }
+
   const rawAuth = req.headers['authorization'];
   if (!rawAuth) return false;
 
   const s = String(rawAuth).trim();
   const m = s.match(/^Apikey\s+(.+)$/i);
   if (!m) return false;
-  return m[1] === process.env.SEPAY_API_KEY;
+  return timingSafeEqualStrings(m[1], apiKey);
 }
 
 export async function processWebhook(payload) {
-  if (!IS_PRODUCTION) {
-    console.log('[SANDBOX] SePay webhook payload:', JSON.stringify(payload, null, 2));
+  if (!isProductionEnv()) {
+    console.log('[DEV] SePay webhook payload:', JSON.stringify(payload, null, 2));
   }
 
   const transactionId = extractTransactionId(payload);

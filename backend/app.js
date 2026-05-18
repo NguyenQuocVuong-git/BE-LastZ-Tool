@@ -1,11 +1,13 @@
 import 'dotenv/config';
 import express from 'express';
+import helmet from 'helmet';
 import authRoutes from './src/routes/auth.js';
 import paymentRoutes from './src/routes/payment.js';
 import adminRoutes from './src/routes/admin.js';
 import webhookRoutes from './src/routes/webhook.js';
 import downloadRoutes from './src/routes/download.js';
 import { bot, telegramWebhookSecret } from './src/config/telegram.js';
+import { corsMiddleware } from './src/middleware/cors.js';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -13,19 +15,14 @@ const SERVER_URL = (process.env.SERVER_URL || '').replace(/\/$/, '');
 
 app.set('trust proxy', 1);
 
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+  }),
+);
 app.use(express.json({ limit: '256kb' }));
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header(
-    'Access-Control-Allow-Headers',
-    'Origin, X-Requested-With, Content-Type, Accept, x-session-token, Authorization',
-  );
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
-  next();
-});
+app.use(corsMiddleware);
 
 app.get('/health', (req, res) => {
   res.json({ success: true, data: { ok: true } });

@@ -1,5 +1,29 @@
 import rateLimit from 'express-rate-limit';
 import { extractSessionToken } from '../utils/sessionToken.js';
+import { PgRateLimitStore } from './pgRateLimitStore.js';
+
+function usePgStore() {
+  return (
+    process.env.USE_PG_RATE_LIMIT === 'true' ||
+    process.env.NODE_ENV === 'production' ||
+    process.env.IS_PRODUCTION === 'true'
+  );
+}
+
+function limiterOptions(windowMs, max, prefix) {
+  const opts = {
+    windowMs,
+    max,
+    standardHeaders: true,
+    legacyHeaders: false,
+  };
+  if (usePgStore()) {
+    const store = new PgRateLimitStore(prefix);
+    store.init({ windowMs });
+    opts.store = store;
+  }
+  return opts;
+}
 
 function clientIp(req) {
   const xf = req.headers['x-forwarded-for'];
@@ -13,10 +37,7 @@ function clientIp(req) {
  * POST /auth/register — 3 lần / giờ / IP
  */
 export const registerLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max: 15,
-  standardHeaders: true,
-  legacyHeaders: false,
+  ...limiterOptions(60 * 60 * 1000, 15, 'register'),
   keyGenerator: (req) => clientIp(req),
   handler(req, res) {
     res.status(429).json({
@@ -31,10 +52,7 @@ export const registerLimiter = rateLimit({
  * POST /auth/login — 50 lần / 15 phút / IP (lockout theo email xử lý trong route)
  */
 export const loginIpLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 50,
-  standardHeaders: true,
-  legacyHeaders: false,
+  ...limiterOptions(15 * 60 * 1000, 50, 'login'),
   keyGenerator: (req) => clientIp(req),
   handler(req, res) {
     res.status(429).json({
@@ -49,10 +67,7 @@ export const loginIpLimiter = rateLimit({
  * POST /auth/forgot-password — 5 lần / giờ / IP
  */
 export const forgotPasswordLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
+  ...limiterOptions(60 * 60 * 1000, 5, 'forgot'),
   keyGenerator: (req) => clientIp(req),
   handler(req, res) {
     res.status(429).json({
@@ -68,10 +83,7 @@ export const forgotPasswordLimiter = rateLimit({
  */
 export function createVerifyLimiter() {
   return rateLimit({
-    windowMs: 5 * 60 * 1000,
-    max: 3,
-    standardHeaders: true,
-    legacyHeaders: false,
+    ...limiterOptions(5 * 60 * 1000, 3, 'verify'),
     keyGenerator: (req) => {
       const token = extractSessionToken(req);
       if (token) return `sess:${token}`;
@@ -91,10 +103,7 @@ export function createVerifyLimiter() {
  * POST /payment/* — 30 lần / 15 phút / IP
  */
 export const paymentLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 30,
-  standardHeaders: true,
-  legacyHeaders: false,
+  ...limiterOptions(15 * 60 * 1000, 30, 'payment'),
   keyGenerator: (req) => clientIp(req),
   handler(req, res) {
     res.status(429).json({
@@ -109,10 +118,7 @@ export const paymentLimiter = rateLimit({
  * POST /admin/* — 10 lần / giờ / IP
  */
 export const adminPostLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
+  ...limiterOptions(60 * 60 * 1000, 10, 'admin'),
   keyGenerator: (req) => clientIp(req),
   handler(req, res) {
     res.status(429).json({

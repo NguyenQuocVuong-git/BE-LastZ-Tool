@@ -4,12 +4,23 @@ const { Pool } = pg;
 
 const isProduction = process.env.NODE_ENV === 'production';
 
+function sslConfigFromEnv() {
+  const url = process.env.DATABASE_URL || '';
+  const strict =
+    process.env.DB_SSL_REJECT_UNAUTHORIZED === 'true' ||
+    process.env.DB_SSL_REJECT_UNAUTHORIZED === '1' ||
+    /sslmode=(require|verify-full|verify-ca)/i.test(url);
+
+  if (!strict) {
+    return { rejectUnauthorized: false };
+  }
+  return { rejectUnauthorized: true };
+}
+
 const poolConfig = isProduction
   ? {
       connectionString: process.env.DATABASE_URL,
-      ssl: {
-        rejectUnauthorized: false,
-      },
+      ssl: sslConfigFromEnv(),
       max: 20,
       idleTimeoutMillis: 30000,
     }

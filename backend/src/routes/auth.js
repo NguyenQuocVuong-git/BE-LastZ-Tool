@@ -11,6 +11,12 @@ import * as emailService from '../services/emailService.js';
 import { requireAuth } from '../middleware/auth.js';
 import * as userService from '../services/userService.js';
 import { extractSessionToken } from '../utils/sessionToken.js';
+import {
+  generateOpaqueToken,
+  hashOpaqueToken,
+  hashSessionToken,
+} from '../utils/tokenHash.js';
+import { appPublicBaseUrl } from '../utils/appUrl.js';
 
 const router = Router();
 const verifyLimiter = createVerifyLimiter();
@@ -133,26 +139,40 @@ router.post('/register', registerLimiter, async (req, res) => {
       [name, email, password_hash, ip],
     );
 
+    const userId = rows[0].id;
     const session_token = userService.generateSessionToken();
-    const { rows: tokRows } = await pool.query(
-      `UPDATE users SET session_token = $2 WHERE id = $1 RETURNING session_token`,
-      [rows[0].id, session_token],
-    );
-    const persistedToken = tokRows[0]?.session_token;
-    if (!persistedToken) {
-      return res.status(500).json({
-        success: false,
-        code: 'INTERNAL_ERROR',
-        message: 'Không thể tạo phiên.',
-      });
+    const sessionHash = hashSessionToken(session_token);
+    await pool.query(`UPDATE users SET session_token = $2 WHERE id = $1`, [userId, sessionHash]);
+
+    let email_verified = false;
+    if (!emailService.isSmtpConfigured() || !appPublicBaseUrl()) {
+      await pool.query(`UPDATE users SET email_verified_at = NOW() WHERE id = $1`, [userId]);
+      email_verified = true;
+    } else {
+      try {
+        const verifyPlain = generateOpaqueToken();
+        const verifyHash = hashOpaqueToken(verifyPlain);
+        const verifyExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+        await pool.query(
+          `UPDATE users SET email_verify_token_hash = $2, email_verify_expires_at = $3 WHERE id = $1`,
+          [userId, verifyHash, verifyExpires],
+        );
+        const link = emailService.buildEmailVerifyLink(verifyPlain);
+        await emailService.sendEmailVerificationEmail(email, link, name);
+      } catch (mailErr) {
+        console.error('register: send verification email failed', mailErr.message || mailErr);
+      }
     }
 
     return res.status(201).json({
       success: true,
-      message: 'Đăng ký thành công.',
+      message: email_verified
+        ? 'Đăng ký thành công.'
+        : 'Đăng ký thành công. Vui lòng xác minh email (đã gửi link).',
       data: {
         ...rows[0],
-        session_token: persistedToken,
+        session_token,
+        email_verified,
       },
     });
   } catch (e) {
@@ -230,7 +250,7 @@ router.post('/login', loginIpLimiter, async (req, res) => {
     clearLoginFailures(ip, email);
     await userService.refreshUserExpiryIfNeeded(user);
     const { rows: u2 } = await pool.query(
-      `SELECT u.email, u.name, u.status, u.plan_id, u.activated_at, u.expires_at,
+      `SELECT u.email, u.name, u.status, u.plan_id, u.activated_at, u.expires_at, u.email_verified_at,
               p.name AS plan_name, p.duration_days AS plan_duration_days, p.price AS plan_price
        FROM users u
        LEFT JOIN plans p ON p.id = u.plan_id
@@ -248,19 +268,18 @@ router.post('/login', loginIpLimiter, async (req, res) => {
     }
 
     const session_token = userService.generateSessionToken();
-    const { rows: tokRows } = await pool.query(
+    const sessionHash = hashSessionToken(session_token);
+    const { rowCount: tokOk } = await pool.query(
       `UPDATE users SET
         session_token = $2,
         last_login_at = NOW(),
         last_login_ip = $3,
         failed_login_attempts = 0,
         locked_until = NULL
-      WHERE id = $1
-      RETURNING session_token`,
-      [user.id, session_token, ip],
+      WHERE id = $1`,
+      [user.id, sessionHash, ip],
     );
-    const persistedToken = tokRows[0]?.session_token;
-    if (!persistedToken) {
+    if (!tokOk) {
       return res.status(500).json({
         success: false,
         code: 'INTERNAL_ERROR',
@@ -274,8 +293,9 @@ router.post('/login', loginIpLimiter, async (req, res) => {
       success: true,
       message: 'Đăng nhập thành công.',
       data: {
-        session_token: persistedToken,
+        session_token,
         email: fresh.email,
+        email_verified: Boolean(fresh.email_verified_at),
         name: fresh.name,
         activated_at: fresh.activated_at,
         expires_at: fresh.expires_at,
@@ -335,28 +355,30 @@ router.post('/forgot-password', forgotPasswordLimiter, async (req, res) => {
       });
     }
 
-    const plain = userService.generateSecureRandomPassword();
+    const resetPlain = generateOpaqueToken();
+    const resetHash = hashOpaqueToken(resetPlain);
+    const resetExpires = new Date(Date.now() + 60 * 60 * 1000);
 
     try {
-      await emailService.sendPasswordResetEmail(user.email, plain, user.name || undefined);
+      const link = emailService.buildPasswordResetLink(resetPlain);
+      await emailService.sendPasswordResetLinkEmail(user.email, link, user.name || undefined);
     } catch (e) {
-      console.error('sendPasswordResetEmail failed', e.message || e);
+      console.error('sendPasswordResetLinkEmail failed', e.message || e);
       return res.json({
         success: true,
         message: forgotPasswordOkMessage,
       });
     }
 
-    const password_hash = await userService.hashPassword(plain);
     try {
       await pool.query(
         `UPDATE users SET
-          password_hash = $2,
+          password_reset_token_hash = $2,
+          password_reset_expires_at = $3,
           failed_login_attempts = 0,
-          locked_until = NULL,
-          session_token = NULL
+          locked_until = NULL
         WHERE id = $1`,
-        [user.id, password_hash],
+        [user.id, resetHash, resetExpires],
       );
     } catch (updErr) {
       console.error('password reset: email sent but DB update failed', user.id, updErr);
@@ -378,6 +400,167 @@ router.post('/forgot-password', forgotPasswordLimiter, async (req, res) => {
       code: 'INTERNAL_ERROR',
       message: 'Lỗi máy chủ.',
     });
+  }
+});
+
+/**
+ * POST /auth/reset-password
+ * Body: { token, new_password } — đặt mật khẩu mới qua link email (một lần, 1 giờ).
+ */
+router.post('/reset-password', forgotPasswordLimiter, async (req, res) => {
+  try {
+    const token = String(req.body?.token || '').trim();
+    const newPassword = String(req.body?.new_password || '');
+
+    if (!token || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'token và new_password là bắt buộc.',
+      });
+    }
+    if (!strongPasswordRegex.test(newPassword)) {
+      return res.status(400).json({
+        success: false,
+        message: strongPasswordMessage,
+      });
+    }
+
+    const tokenHash = hashOpaqueToken(token);
+    const { rows } = await pool.query(
+      `SELECT id, status FROM users
+       WHERE password_reset_token_hash = $1
+         AND password_reset_expires_at > NOW()`,
+      [tokenHash],
+    );
+    const user = rows[0];
+    if (!user || user.status === 'banned') {
+      return res.status(400).json({
+        success: false,
+        code: 'INVALID_RESET_TOKEN',
+        message: 'Link không hợp lệ hoặc đã hết hạn.',
+      });
+    }
+
+    const password_hash = await userService.hashPassword(newPassword);
+    await pool.query(
+      `UPDATE users SET
+        password_hash = $2,
+        password_reset_token_hash = NULL,
+        password_reset_expires_at = NULL,
+        failed_login_attempts = 0,
+        locked_until = NULL,
+        session_token = NULL
+      WHERE id = $1`,
+      [user.id, password_hash],
+    );
+
+    return res.json({
+      success: true,
+      message: 'Đã đặt mật khẩu mới. Vui lòng đăng nhập lại.',
+    });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({
+      success: false,
+      code: 'INTERNAL_ERROR',
+      message: 'Lỗi máy chủ.',
+    });
+  }
+});
+
+/**
+ * POST /auth/verify-email
+ * Body: { token } — xác minh email sau đăng ký.
+ */
+router.post('/verify-email', async (req, res) => {
+  try {
+    const token = String(req.body?.token ?? req.query?.token ?? '').trim();
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'Thiếu token.' });
+    }
+
+    const tokenHash = hashOpaqueToken(token);
+    const { rows } = await pool.query(
+      `SELECT id, email FROM users
+       WHERE email_verify_token_hash = $1
+         AND email_verify_expires_at > NOW()`,
+      [tokenHash],
+    );
+    const user = rows[0];
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        code: 'INVALID_VERIFY_TOKEN',
+        message: 'Link xác minh không hợp lệ hoặc đã hết hạn.',
+      });
+    }
+
+    await pool.query(
+      `UPDATE users SET
+        email_verified_at = NOW(),
+        email_verify_token_hash = NULL,
+        email_verify_expires_at = NULL
+      WHERE id = $1`,
+      [user.id],
+    );
+
+    return res.json({
+      success: true,
+      message: 'Email đã được xác minh.',
+      data: { email: user.email },
+    });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ success: false, message: 'Lỗi máy chủ.' });
+  }
+});
+
+/**
+ * POST /auth/resend-verification
+ * Gửi lại link xác minh (cần đăng nhập).
+ */
+router.post('/resend-verification', requireAuth, forgotPasswordLimiter, async (req, res) => {
+  try {
+    const u = req.user;
+    if (u.email_verified_at) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email đã được xác minh.',
+      });
+    }
+    if (!emailService.isSmtpConfigured()) {
+      return res.status(503).json({
+        success: false,
+        code: 'EMAIL_NOT_CONFIGURED',
+        message: 'Máy chủ chưa cấu hình gửi email.',
+      });
+    }
+    if (!appPublicBaseUrl()) {
+      return res.status(503).json({
+        success: false,
+        code: 'APP_URL_NOT_CONFIGURED',
+        message: 'Chưa cấu hình APP_PUBLIC_URL.',
+      });
+    }
+
+    const verifyPlain = generateOpaqueToken();
+    const verifyHash = hashOpaqueToken(verifyPlain);
+    const verifyExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await pool.query(
+      `UPDATE users SET email_verify_token_hash = $2, email_verify_expires_at = $3 WHERE id = $1`,
+      [u.id, verifyHash, verifyExpires],
+    );
+
+    const link = emailService.buildEmailVerifyLink(verifyPlain);
+    await emailService.sendEmailVerificationEmail(u.email, link, u.name || undefined);
+
+    return res.json({
+      success: true,
+      message: 'Đã gửi lại email xác minh.',
+    });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ success: false, message: 'Lỗi máy chủ.' });
   }
 });
 
@@ -468,7 +651,8 @@ router.get('/verify', verifyLimiter, async (req, res) => {
       });
     }
 
-    const { rows } = await pool.query(`SELECT * FROM users WHERE session_token = $1`, [token]);
+    const tokenHash = hashSessionToken(token);
+    const { rows } = await pool.query(`SELECT * FROM users WHERE session_token = $1`, [tokenHash]);
     const user = rows[0];
 
     if (!user) {
@@ -531,6 +715,7 @@ router.get('/me', requireAuth, async (req, res) => {
       data: {
         id: u.id,
         email: u.email,
+        email_verified: Boolean(u.email_verified_at),
         role: u.role,
         status: u.status,
         plan_id: u.plan_id,

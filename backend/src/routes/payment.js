@@ -2,7 +2,7 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import { pool } from '../config/database.js';
 import { paymentLimiter } from '../middleware/rateLimiter.js';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, requireEmailVerified } from '../middleware/auth.js';
 import * as couponService from '../services/couponService.js';
 import * as userService from '../services/userService.js';
 
@@ -59,7 +59,7 @@ router.get('/plans', async (req, res) => {
  * POST /payment/check-coupon
  * Kiểm tra mã giảm giá với gói đã chọn (user đã đăng nhập).
  */
-router.post('/check-coupon', paymentLimiter, requireAuth, async (req, res) => {
+router.post('/check-coupon', paymentLimiter, requireAuth, requireEmailVerified, async (req, res) => {
   try {
     const planId = Number(req.body?.plan_id);
     const code = req.body?.code;
@@ -105,7 +105,7 @@ router.post('/check-coupon', paymentLimiter, requireAuth, async (req, res) => {
  * POST /payment/request
  * Tạo đơn chờ thanh toán + URL VietQR.
  */
-router.post('/request', paymentLimiter, requireAuth, async (req, res) => {
+router.post('/request', paymentLimiter, requireAuth, requireEmailVerified, async (req, res) => {
   try {
     const planId = Number(req.body?.plan_id);
     const couponRaw = req.body?.discount_code ?? req.body?.code;
@@ -208,7 +208,7 @@ router.post('/request', paymentLimiter, requireAuth, async (req, res) => {
  * Lịch sử đơn thanh toán của tài khoản đăng nhập (chờ / đã xác nhận / từ chối).
  * Query: limit (mặc định 20, tối đa 100), offset (mặc định 0).
  */
-router.get('/history', paymentLimiter, requireAuth, async (req, res) => {
+router.get('/history', paymentLimiter, requireAuth, requireEmailVerified, async (req, res) => {
   try {
     const limitRaw = Number(req.query?.limit);
     const offsetRaw = Number(req.query?.offset);
@@ -273,7 +273,7 @@ router.get('/history', paymentLimiter, requireAuth, async (req, res) => {
  * GET /payment/:paymentId/status
  * FE poll trạng thái đơn thanh toán để mở khoá tính năng ngay sau khi webhook xác nhận.
  */
-router.get('/:paymentId/status', paymentLimiter, requireAuth, async (req, res) => {
+router.get('/:paymentId/status', paymentLimiter, requireAuth, requireEmailVerified, async (req, res) => {
   try {
     const { paymentId } = req.params;
 
@@ -334,7 +334,7 @@ router.get('/:paymentId/status', paymentLimiter, requireAuth, async (req, res) =
  * POST /payment/:paymentId/cancel
  * User tự hủy đơn đang chờ (chọn nhầm gói, muốn tạo lại đơn mới).
  */
-router.post('/:paymentId/cancel', paymentLimiter, requireAuth, async (req, res) => {
+router.post('/:paymentId/cancel', paymentLimiter, requireAuth, requireEmailVerified, async (req, res) => {
   try {
     const { paymentId } = req.params;
     const r = await pool.query(

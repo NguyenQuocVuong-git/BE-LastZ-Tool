@@ -1,6 +1,7 @@
 import { pool } from '../config/database.js';
 import * as userService from '../services/userService.js';
 import { extractSessionToken } from '../utils/sessionToken.js';
+import { hashSessionToken } from '../utils/tokenHash.js';
 
 /**
  * Đọc header x-session-token (hoặc Bearer), nạp user vào req.user
@@ -16,9 +17,10 @@ export async function requireAuth(req, res, next) {
   }
 
   try {
+    const tokenHash = hashSessionToken(token);
     const { rows } = await pool.query(
       `SELECT * FROM users WHERE session_token = $1`,
-      [token],
+      [tokenHash],
     );
     const user = rows[0];
     if (!user) {
@@ -35,7 +37,7 @@ export async function requireAuth(req, res, next) {
       user.id,
     ]);
     const u = refreshed[0];
-    if (!u || u.session_token !== token) {
+    if (!u || u.session_token !== tokenHash) {
       return res.status(401).json({
         success: false,
         code: 'SESSION_INVALID',
@@ -63,6 +65,19 @@ export function requireAdmin(req, res, next) {
     return res.status(404).json({
       success: false,
       message: 'Not Found',
+    });
+  }
+  next();
+}
+
+/** Yêu cầu đã xác minh email (sau khi requireAuth). */
+export function requireEmailVerified(req, res, next) {
+  const u = req.user;
+  if (!u?.email_verified_at) {
+    return res.status(403).json({
+      success: false,
+      code: 'EMAIL_NOT_VERIFIED',
+      message: 'Vui lòng xác minh email trước khi tiếp tục. Kiểm tra hộp thư hoặc gửi lại link.',
     });
   }
   next();

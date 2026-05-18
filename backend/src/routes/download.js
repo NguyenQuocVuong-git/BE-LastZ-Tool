@@ -1,14 +1,11 @@
 import { Router } from 'express';
-import { requireAuth, requireActiveSubscription } from '../middleware/auth.js';
 import { listDownloadFiles, resolveDownloadFile } from '../utils/downloadFiles.js';
 
 const router = Router();
 
-router.use(requireAuth, requireActiveSubscription);
-
 /**
  * GET /download
- * Danh sách file trong thư mục download (admin kéo thả thủ công).
+ * Danh sách file trong thư mục download (public, không cần đăng nhập).
  */
 router.get('/', async (req, res) => {
   try {
@@ -26,7 +23,7 @@ router.get('/', async (req, res) => {
 
 /**
  * GET /download/:filename
- * Tải xuống một file theo tên (ví dụ ToolLastZ.zip).
+ * Tải xuống một file theo tên (public, không cần đăng nhập).
  */
 router.get('/:filename', async (req, res) => {
   try {

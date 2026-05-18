@@ -49,8 +49,7 @@ app.use((req, res) => {
   res.status(404).json({ success: false, message: 'Not Found' });
 });
 
-app.listen(PORT, async () => {
-  console.log(`Server listening on port ${PORT}`);
+async function setupTelegramWebhook() {
   if (bot && SERVER_URL && telegramWebhookSecret) {
     const hook = `${SERVER_URL}/webhook/telegram/${telegramWebhookSecret}`;
     try {
@@ -64,4 +63,19 @@ app.listen(PORT, async () => {
   } else {
     console.warn('SERVER_URL or TELEGRAM_WEBHOOK_SECRET missing — skip setWebHook.');
   }
-});
+}
+
+// Vercel: export app làm serverless handler (@vercel/node)
+export default app;
+
+// Chạy local: node app.js / npm start
+if (!process.env.VERCEL) {
+  app.listen(PORT, async () => {
+    console.log(`Server listening on port ${PORT}`);
+    await setupTelegramWebhook();
+  });
+} else {
+  setupTelegramWebhook().catch((e) =>
+    console.error('Failed to set Telegram webhook on cold start', e.message)
+  );
+}

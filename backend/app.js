@@ -4,6 +4,7 @@ import authRoutes from './src/routes/auth.js';
 import paymentRoutes from './src/routes/payment.js';
 import adminRoutes from './src/routes/admin.js';
 import webhookRoutes from './src/routes/webhook.js';
+import downloadRoutes from './src/routes/download.js';
 import { bot, telegramWebhookSecret } from './src/config/telegram.js';
 
 const app = express();
@@ -34,6 +35,7 @@ app.use('/auth', authRoutes);
 app.use('/payment', paymentRoutes);
 app.use('/admin', adminRoutes);
 app.use('/webhook', webhookRoutes);
+app.use('/download', downloadRoutes);
 
 app.use((err, req, res, next) => {
   console.error(err);

@@ -67,3 +67,37 @@ export function requireAdmin(req, res, next) {
   }
   next();
 }
+
+/** Chỉ user đang active và chưa hết hạn gói */
+export function requireActiveSubscription(req, res, next) {
+  const u = req.user;
+  if (!u) {
+    return res.status(401).json({
+      success: false,
+      code: 'UNAUTHORIZED',
+      message: 'Thiếu x-session-token.',
+    });
+  }
+  if (u.status === 'banned') {
+    return res.status(403).json({
+      success: false,
+      code: 'BANNED',
+      message: 'Tài khoản của bạn đã bị khóa. Vui lòng liên hệ Admin để được hỗ trợ.',
+    });
+  }
+  if (u.status !== 'active') {
+    return res.status(403).json({
+      success: false,
+      code: 'SUBSCRIPTION_REQUIRED',
+      message: 'Cần gói đang hoạt động để tải file.',
+    });
+  }
+  if (!u.expires_at || new Date(u.expires_at) <= new Date()) {
+    return res.status(403).json({
+      success: false,
+      code: 'SUBSCRIPTION_EXPIRED',
+      message: 'Gói đã hết hạn. Vui lòng gia hạn.',
+    });
+  }
+  next();
+}
